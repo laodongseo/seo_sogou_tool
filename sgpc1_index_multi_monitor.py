@@ -32,7 +32,7 @@ requests.packages.urllib3.disable_warnings()
 
 my_header = {
 	'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-	'Accept-Encoding': 'gzip, deflate',
+	'Accept-Encoding': 'deflate',
 	'Accept-Language': 'zh-CN,zh;q=0.9',
 	'Connection': 'keep-alive',
 	'Host': 'www.sogou.com',
@@ -46,13 +46,21 @@ my_header = {
 }
 
 
-def get_cookie(num):
-	if num == 1:
-		r = requests.get(url="https://www.sogou.com",headers=my_header)
-	else:
-		r = requests.get(url="https://v.sogou.com/v?ie=utf8&query=&p=40030600",headers=my_header)
-	cookie = ";".join([f'{key}={value}' for key, value in r.cookies.items()])
-	return cookie
+
+cookie_str = """
+IPLOC=CN1100;SUID={suid};SUV=1610678580404418;usid={usid};CXID={cxid};front_screen_dpi=1;front_screen_resolution=1440*900;ssuid=8566186496;GOTO=;weixinIndexVisited=1;browerV=3;osV=1;FREQUENCY={unix}_11;wuid=AAGJpZbjOgAAAAqkLGJ2SAIAZAM=;ABTEST=7|1641782747|v17;SNUID=BFC70BC0FCF928C81A412714FD480394;ld=Dlllllllll2Pkyiklllllp4tTTolllll55tEyZllllkllllljZlll5@@@@@@@@@@;sst0=437;LSTMV=21%2C508;LCLKINT=139975
+"""
+
+# 生成随机cookie
+def get_cookie():
+	global cookie_str
+	unix = time.time()*1000
+	seed = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	suid = ''.join([random.choice(seed) for _ in range(32)])
+	usid = ''.join([random.choice(seed) for _ in range(16)])
+	cxid = ''.join([random.choice(seed.lower()) for _ in range(32)])
+	cookie_str = cookie_str.strip().format(suid = suid,usid=usid,cxid=cxid,unix=unix)
+	return cookie_str
 
 
 class sgpcIndexMonitor(threading.Thread):
@@ -74,9 +82,9 @@ class sgpcIndexMonitor(threading.Thread):
 	# 获取某词serp源码
 	def get_html(self,url,retry=1):
 		headers = copy.deepcopy(my_header)
-		headers['Cookie'] = get_cookie(retry)
+		headers['Cookie'] = get_cookie()
 		try:
-			r = requests.get(url=url,headers=headers,verify=False,timeout=15)
+			r = requests.get(url=url,headers=headers,timeout=15)
 		except Exception as e:
 			print('获取源码失败',e)
 			time.sleep(30)
@@ -92,7 +100,7 @@ class sgpcIndexMonitor(threading.Thread):
 		encrypt_url_list = []
 		doc = pq(html)
 		div_mode_list = doc('div.results div.vrwrap').items()
-		div_label_list = doc('div.results div.rb').items() # 描述出[xx]
+		div_label_list = doc('div.results div.rb').items() # 描述为[xx]样式
 		div_list = chain(div_mode_list,div_label_list)
 		for div in div_list:
 			h3 = div('h3') # 有时候class=vr-title带空格
@@ -124,9 +132,7 @@ class sgpcIndexMonitor(threading.Thread):
 		encrypt_url = f'https://www.sogou.com{encrypt_url}'
 		html_now_url = self.get_html(encrypt_url)
 		html,now_url = html_now_url if html_now_url else ('','')
-		js_html = html.replace('\n','')
-		# print('---',js_html)
-		res = re.search(r'content.*URL=\'(.*?)\'"></noscript>',js_html,re.S|re.I)
+		res = re.search(r'content.*URL=\'(.*?)\'"></noscript>',html.replace('\n',''),re.S|re.I)
 		real_url = res.group(1) if res else 'xxx'
 		return real_url
 
@@ -185,8 +191,8 @@ class sgpcIndexMonitor(threading.Thread):
 			group_kwd = q.get()
 			group,kwd = group_kwd
 			print(group,kwd)
+			url = f"https://www.sogou.com/web?ie=utf8&query={kwd}"
 			try:
-				url = f"https://www.sogou.com/web?ie=utf8&query={kwd}"
 				html_now_url = self.get_html(url)
 				if not html_now_url:
 					q.put(group_kwd)
@@ -202,7 +208,7 @@ class sgpcIndexMonitor(threading.Thread):
 				encrypt_url_list_rank = self.get_encrpt_urls(html)
 			except Exception as e:
 				print(traceback.format_exc())
-				traceback.print_exc(file=open(f'{today}log.txt', 'a'))
+				traceback.print_exc(file=open(f'{today}pclog.txt', 'a'))
 			else:
 				print(len(encrypt_url_list_rank))
 				real_urls_rank = self.save_serp(kwd,group,encrypt_url_list_rank)
@@ -221,7 +227,7 @@ if __name__ == "__main__":
 	today = time.strftime('%Y%m%d',time.localtime())
 	list_headers = [i.strip() for i in open('ua_pc.txt','r',encoding='utf-8')]
 	TargetDomains = ['5i5j.com','lianjia.com','ke.com','anjuke.com','fang.com'] # 目标域名
-	q = sgpcIndexMonitor.read_excel('2021kwd_url_core_city.xlsx')  # 关键词队列及分类
+	q = sgpcIndexMonitor.read_excel('城市大词+竞价转化词_city.xlsx')  # 关键词队列及分类
 	all_num = q.qsize() # 总词数
 	f = open('{0}sgpc1_index_info.txt'.format(today),'w',encoding="utf-8")
 	f_all = open('{0}sgpc1_index_all.txt'.format(today),'w',encoding="utf-8")
